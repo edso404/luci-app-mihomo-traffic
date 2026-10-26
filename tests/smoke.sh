@@ -20,7 +20,7 @@ mkdir -p "$MIHOMO_TRAFFIC_DATA"
 
 ucode -L "$lib" -e '
 import * as fs from "fs";
-import { DATA_DIR, CUR_FILE, INNER, hour_of, query, resolve_alias } from "mihomo_traffic";
+import { DATA_DIR, CUR_FILE, INNER, hour_of, query, resolve_alias, router_hostname, local_router_ips, get_online_ips } from "mihomo_traffic";
 
 function fail(msg) { warn(msg, "\n"); exit(1); }
 function check(name, got, want) {
@@ -32,6 +32,11 @@ function check(name, got, want) {
 check("resolve_alias dhcp", resolve_alias("192.168.1.1", { "192.168.1.1": "my-host" }, {}), "my-host");
 check("resolve_alias arp fallback", resolve_alias("192.168.1.2", {}, { "192.168.1.2": "aa:bb:cc:dd:12:34" }), "AA:BB:CC:DD:12:34");
 check("resolve_alias ip fallback", resolve_alias("192.168.1.3", {}, {}), "192.168.1.3");
+
+// 验证路由器本机识别与在线状态
+check("router hostname non-empty", length(router_hostname()) > 0, true);
+check("local router ips includes loopback", !!local_router_ips()["127.0.0.1"], true);
+check("online ips includes loopback", !!get_online_ips()["127.0.0.1"], true);
 
 let now = time();
 let rows = [], recent = [0, 0], all = [0, 0];

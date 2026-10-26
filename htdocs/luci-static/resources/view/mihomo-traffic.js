@@ -457,7 +457,8 @@ return view.extend({
 		const total = links.reduce((a, l) => a + l[2], 0) || 1;
 		const sum = (i, k) => links.reduce((a, l) => a + (l[i] == k ? l[2] : 0), 0);
 		const label = (text, v) => ({ show: v / total >= 0.03, formatter: text });
-		const data = srcs.map((s) => ({ name: 's:' + s, label: label(this.stats.aliases?.[s] || this.stats.names?.[s] || s, sum(0, s)), depth: 0 }))
+		const aliasOf = (s) => (this.stats.aliases?.[s] && this.stats.aliases[s] != s) ? this.stats.aliases[s] : (this.stats.names?.[s] || s);
+		const data = srcs.map((s) => ({ name: 's:' + s, label: label(aliasOf(s), sum(0, s)), depth: 0 }))
 			.concat(nodes.map((n) => ({ name: 'n:' + n, label: label(n, sum(1, n)), depth: 1 })));
 		c.off('click');
 		c.on('click', (p) => {
@@ -521,8 +522,10 @@ return view.extend({
 
 	renderCell(d, v, stats, row) {
 		let alias = null;
-		if (d == 'src')
-			alias = row?.alias || stats.aliases?.[v] || stats.names?.[v];
+		if (d == 'src') {
+			const a = row?.alias || stats.aliases?.[v];
+			alias = (a && a != v) ? a : stats.names?.[v];
+		}
 		const text = (alias && alias != v) ? [ alias, E('br'), E('small', { class: 'mt-muted' }, v) ] : v;
 		if (v == stats.inner)
 			return E('td', { class: 'td mt-muted', title: 'mihomo 自身发起的连接（链式代理承载、DoH 等），与设备流量重复，不计入合计' }, text);

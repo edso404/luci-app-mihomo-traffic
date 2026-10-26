@@ -5,6 +5,7 @@
 
 import * as fs from 'fs';
 import { cursor } from 'uci';
+import { connect } from 'ubus';
 
 // 环境变量只给测试用，正常运行都走默认路径
 export const DATA_DIR = getenv('MIHOMO_TRAFFIC_DATA') ?? '/etc/mihomo-traffic';
@@ -21,7 +22,43 @@ export function hour_of(t) {
 	return sprintf('%04d-%02d-%02d %02d', l.year, l.mon, l.mday, l.hour);
 };
 
-// IP → 主机名：DHCP 静态分配优先，再用动态租约补齐
+// 获取路由器系统主机名
+export function router_hostname() {
+	let name;
+	try { name = cursor().get('system', '@system[0]', 'hostname'); } catch (e) {}
+	if (name)
+		return name;
+	let m = match(fs.readfile('/proc/sys/kernel/hostname') ?? '', /^([^\r\n]+)/);
+	return m?.[1] || 'OpenWrt';
+};
+
+// 获取路由器自身的所有本地 IPv4 地址（127.0.0.1、LAN、WAN 等）
+export function local_router_ips() {
+	let ips = { '127.0.0.1': true };
+	try {
+		cursor().foreach('network', 'interface', (s) => {
+			if (type(s.ipaddr) == 'array') {
+				for (let ip in s.ipaddr)
+					ips[split(ip, '/')[0]] = true;
+			} else if (s.ipaddr) {
+				ips[split(s.ipaddr, '/')[0]] = true;
+			}
+		});
+	} catch (e) {}
+	try {
+		let u = connect();
+		let dump = u?.call('network.interface', 'dump');
+		for (let iface in dump?.interface ?? []) {
+			for (let a in iface['ipv4-address'] ?? []) {
+				if (a?.address)
+					ips[a.address] = true;
+			}
+		}
+	} catch (e) {}
+	return ips;
+};
+
+// IP → 主机名：DHCP 静态分配优先，再用动态租约补齐，以及路由器本机
 export function host_names() {
 	let names = {};
 	for (let line in split(fs.readfile('/tmp/dhcp.leases') ?? '', '\n')) {
@@ -29,10 +66,15 @@ export function host_names() {
 		if (length(f) >= 4 && f[3] != '*')
 			names[f[2]] = f[3];
 	}
-	cursor().foreach('dhcp', 'host', (s) => {
-		if (s.ip && s.name)
-			names[s.ip] = s.name;
-	});
+	try {
+		cursor().foreach('dhcp', 'host', (s) => {
+			if (s.ip && s.name)
+				names[s.ip] = s.name;
+		});
+	} catch (e) {}
+	let r_host = router_hostname();
+	for (let ip, _ in local_router_ips())
+		names[ip] = r_host;
 	return names;
 };
 
@@ -61,7 +103,7 @@ export function resolve_alias(ip, names, macs) {
 	return ip;
 };
 
-// 获取当前局域网在线活跃 IP 集合（未到期 DHCP 租约 + 活跃 ARP 记录）
+// 获取当前局域网在线活跃 IP 集合（未到期 DHCP 租约 + 活跃 ARP 记录 + 路由器本机）
 export function get_online_ips() {
 	let online = {};
 	let now = time();
@@ -75,6 +117,8 @@ export function get_online_ips() {
 		if (length(f) >= 4 && f[2] != '0x0' && match(f[3], /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
 			online[f[0]] = true;
 	}
+	for (let ip, _ in local_router_ips())
+		online[ip] = true;
 	return online;
 };
 
@@ -269,14 +313,22 @@ export function query(hours, dims, where, limit) {
 		links[l] = (links[l] ?? 0) + bytes;
 	}
 
+	let cur_names = host_names();
+	for (let ip, name in cur_names) {
+		if (!aliases[ip] && name != ip)
+			aliases[ip] = name;
+	}
+
 	let keys_sorted = by_total(total);
 	let rows = map(slice(keys_sorted, 0, limit ?? length(keys_sorted)), (k) => {
 		let row = { up: total[k][0], down: total[k][1] };
 		let v = split(k, '\t');
 		for (let i, d in dims) {
 			row[d] = v[i];
-			if (d == 'src')
-				row.alias = aliases[v[i]] ?? v[i];
+			if (d == 'src') {
+				let a = aliases[v[i]];
+				row.alias = (a && a != v[i]) ? a : (cur_names[v[i]] ?? v[i]);
+			}
 		}
 		return row;
 	});
