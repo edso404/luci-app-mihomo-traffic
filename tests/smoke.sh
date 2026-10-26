@@ -37,6 +37,7 @@ check("resolve_alias ip fallback", resolve_alias("192.168.1.3", {}, {}), "192.16
 check("router hostname non-empty", length(router_hostname()) > 0, true);
 check("local router ips includes loopback", !!local_router_ips()["127.0.0.1"], true);
 check("online ips includes loopback", !!get_online_ips()["127.0.0.1"], true);
+check("host_names includes loopback alias", host_names()["127.0.0.1"], sprintf("%s(本机)", router_hostname()));
 
 let now = time();
 let rows = [], recent = [0, 0], all = [0, 0];

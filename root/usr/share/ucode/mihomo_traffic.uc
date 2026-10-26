@@ -72,7 +72,7 @@ export function host_names() {
 				names[s.ip] = s.name;
 		});
 	} catch (e) {}
-	let r_host = router_hostname();
+	let r_host = sprintf('%s(本机)', router_hostname());
 	for (let ip, _ in local_router_ips())
 		names[ip] = r_host;
 	return names;
