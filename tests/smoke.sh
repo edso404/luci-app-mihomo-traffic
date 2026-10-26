@@ -20,7 +20,7 @@ mkdir -p "$MIHOMO_TRAFFIC_DATA"
 
 ucode -L "$lib" -e '
 import * as fs from "fs";
-import { DATA_DIR, CUR_FILE, INNER, hour_of, query, resolve_alias, router_hostname, local_router_ips, get_online_ips } from "mihomo_traffic";
+import { DATA_DIR, CUR_FILE, INNER, hour_of, query, resolve_alias, router_hostname, local_router_ips, get_online_ips, host_names } from "mihomo_traffic";
 
 function fail(msg) { warn(msg, "\n"); exit(1); }
 function check(name, got, want) {
