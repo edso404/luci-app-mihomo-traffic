@@ -69,7 +69,7 @@ function hour_rows(t) {
 	let weekend = wday == 0 || wday == 6;
 	let agg = {};
 	for (let dev in DEVICES) {
-		let ip = dev[0], targets = dev[3], profile = dev[4];
+		let ip = dev[0], alias = dev[1], targets = dev[3], profile = dev[4];
 		let p = PROFILE[profile][h];
 		if (weekend && profile == 'work') p *= 0.3;
 		if (weekend && (profile == 'tv' || profile == 'game')) p = p * 1.3 + 0.2;
@@ -78,15 +78,15 @@ function hour_rows(t) {
 			let bytes = int(base * p * (0.4 + rnd() * 1.2));
 			if (bytes < 1)
 				continue;
-			agg[`${ip}\t${node}\t${host}`] = [ int(bytes * upr), int(bytes * (1 - upr)) ];
+			agg[`${ip}\t${alias}\t${node}\t${host}`] = [ int(bytes * upr), int(bytes * (1 - upr)) ];
 		}
 		// 长尾小流量
 		let small = int(3 * MB * (0.2 + p) * rnd());
-		agg[`${ip}\t${targets[0][1]}\t${SMALL}`] = [ int(small * 0.3), int(small * 0.7) ];
+		agg[`${ip}\t${alias}\t${targets[0][1]}\t${SMALL}`] = [ int(small * 0.3), int(small * 0.7) ];
 	}
 	// 链式代理的承载连接与 DoH
-	agg[`${INNER}\t${US}\tus-03.example.net`] = [ int(300 * MB * rnd()), int(500 * MB * rnd()) ];
-	agg[`${INNER}\t${D}\tdns.alidns.com`] = [ int(2 * MB * rnd()), int(4 * MB * rnd()) ];
+	agg[`${INNER}\t${INNER}\t${US}\tus-03.example.net`] = [ int(300 * MB * rnd()), int(500 * MB * rnd()) ];
+	agg[`${INNER}\t${INNER}\t${D}\tdns.alidns.com`] = [ int(2 * MB * rnd()), int(4 * MB * rnd()) ];
 	return { hour, agg };
 }
 

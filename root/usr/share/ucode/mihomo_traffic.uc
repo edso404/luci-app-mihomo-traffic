@@ -36,6 +36,51 @@ export function host_names() {
 	return names;
 };
 
+// 读取 ARP 表映射：IP -> MAC
+export function arp_macs() {
+	let macs = {};
+	for (let line in split(fs.readfile('/proc/net/arp') ?? '', '\n')) {
+		let f = split(line, /[ \t]+/);
+		if (length(f) >= 4 && match(f[3], /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
+			macs[f[0]] = f[3];
+	}
+	return macs;
+};
+
+// 解析设备别名：静态/DHCP 主机名优先 -> 无名字查 ARP MAC 后 4 位兜底 -> IP 自身兜底
+export function resolve_alias(ip, names, macs) {
+	if (!ip || ip == '-' || ip == INNER)
+		return ip;
+	names ??= host_names();
+	if (names[ip] && names[ip] != '*')
+		return names[ip];
+	macs ??= arp_macs();
+	let mac = macs[ip];
+	if (mac) {
+		let m = match(mac, /([0-9a-fA-F]{2}):([0-9a-fA-F]{2})$/);
+		if (m)
+			return sprintf('设备-%s%s', toupper(m[1]), toupper(m[2]));
+	}
+	return ip;
+};
+
+// 获取当前局域网在线活跃 IP 集合（未到期 DHCP 租约 + 活跃 ARP 记录）
+export function get_online_ips() {
+	let online = {};
+	let now = time();
+	for (let line in split(fs.readfile('/tmp/dhcp.leases') ?? '', '\n')) {
+		let f = split(line, ' ');
+		if (length(f) >= 4 && +f[0] > now)
+			online[f[2]] = true;
+	}
+	for (let line in split(fs.readfile('/proc/net/arp') ?? '', '\n')) {
+		let f = split(line, /[ \t]+/);
+		if (length(f) >= 4 && f[2] != '0x0' && match(f[3], /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
+			online[f[0]] = true;
+	}
+	return online;
+};
+
 export const OTHERS = '其他';
 
 const TOP_SERIES = 6;	// 趋势图每个维度最多分几条序列，其余并入「其他」
@@ -55,22 +100,33 @@ function read_tsv(path, cb) {
 	}
 }
 
-// 已结束那一天的日汇总：src \t node \t host \t up \t down。按需生成，原始 tsv 更新过就重建
+// 已结束那一天的日汇总：src \t alias \t node \t host \t up \t down。按需生成，原始 tsv 更新过就重建
 function day_rows(day) {
 	let tsv = `${DATA_DIR}/${day}.tsv`, sum = `${DATA_DIR}/${day}.day`;
 	let rows = [];
 	if ((fs.stat(sum)?.mtime ?? -1) >= (fs.stat(tsv)?.mtime ?? 0)) {
-		read_tsv(sum, (f) => push(rows, [day, f[0], f[1], f[2], f[3], f[4]]));
+		read_tsv(sum, (f) => {
+			if (length(f) == 6)
+				push(rows, [day, f[0], f[1], f[2], f[3], f[4], f[5]]);
+			else if (length(f) == 5)
+				push(rows, [day, f[0], f[0], f[1], f[2], f[3], f[4]]);
+		});
 		return rows;
 	}
 
 	let agg = {};
 	read_tsv(tsv, (f) => {
-		if (length(f) != 6)
+		let src, alias, node, host, up, down;
+		if (length(f) == 7) {
+			src = f[1]; alias = f[2]; node = f[3]; host = f[4]; up = +f[5]; down = +f[6];
+		} else if (length(f) == 6) {
+			src = f[1]; alias = f[1]; node = f[2]; host = f[3]; up = +f[4]; down = +f[5];
+		} else {
 			return;
-		let k = `${f[1]}\t${f[2]}\t${f[3]}`;
+		}
+		let k = `${src}\t${alias}\t${node}\t${host}`;
 		let a = agg[k];
-		if (a) { a[0] += +f[4]; a[1] += +f[5]; } else agg[k] = [+f[4], +f[5]];
+		if (a) { a[0] += up; a[1] += down; } else agg[k] = [up, down];
 	});
 	let kept = {};
 	for (let k, a in agg) {
@@ -79,7 +135,7 @@ function day_rows(day) {
 			continue;
 		}
 		let p = split(k, '\t');
-		let sk = `${p[0]}\t${p[1]}\t${SMALL}`;
+		let sk = `${p[0]}\t${p[1]}\t${p[2]}\t${SMALL}`;
 		let b = kept[sk] ??= [0, 0];
 		b[0] += a[0]; b[1] += a[1];
 	}
@@ -88,14 +144,14 @@ function day_rows(day) {
 	for (let k, a in kept) {
 		out += sprintf('%s\t%d\t%d\n', k, a[0], a[1]);
 		let p = split(k, '\t');
-		push(rows, [day, p[0], p[1], p[2], a[0], a[1]]);
+		push(rows, [day, p[0], p[1], p[2], p[3], a[0], a[1]]);
 	}
 	fs.writefile(`${sum}.tmp`, out);
 	fs.rename(`${sum}.tmp`, sum);
 	return rows;
 }
 
-// 读出查询范围内的全部记录（含当前小时快照），每条为 [时段, src, node, host, up, down]
+// 读出查询范围内的全部记录（含当前小时快照），每条为 [时段, src, alias, node, host, up, down]
 // 时段按小时（hours <= HOURLY_MAX）或按天；返回 since、first（不论过滤条件，范围内最早有数据的时段）、step 和 rows
 function load_rows(hours) {
 	let daily = hours > HOURLY_MAX;
@@ -113,15 +169,20 @@ function load_rows(hours) {
 			push(rows, ...day_rows(m[1]));
 		else
 			read_tsv(`${DATA_DIR}/${name}`, (f) => {
-				if (length(f) == 6 && f[0] >= since)
-					push(rows, daily ? [m[1], f[1], f[2], f[3], f[4], f[5]] : f);
+				if (length(f) == 7 && f[0] >= since)
+					push(rows, daily ? [m[1], f[1], f[2], f[3], f[4], f[5], f[6]] : f);
+				else if (length(f) == 6 && f[0] >= since)
+					push(rows, daily ? [m[1], f[1], f[1], f[2], f[3], f[4], f[5]] : [f[0], f[1], f[1], f[2], f[3], f[4], f[5]]);
 			});
 	}
 	let cur = json(fs.readfile(CUR_FILE) ?? 'null');
 	let cur_bucket = cur?.hour ? (daily ? substr(cur.hour, 0, 10) : cur.hour) : null;
 	for (let k, v in cur?.agg ?? {}) {
 		let f = split(k, '\t');
-		push(rows, [cur_bucket, f[0], f[1], f[2], v[0], v[1]]);
+		if (length(f) == 4)
+			push(rows, [cur_bucket, f[0], f[1], f[2], f[3], v[0], v[1]]);
+		else if (length(f) == 3)
+			push(rows, [cur_bucket, f[0], f[0], f[1], f[2], v[0], v[1]]);
 	}
 	// 不假设文件内按时间排序，取最早的时段作为趋势图起点
 	let first = cur_bucket;
@@ -167,18 +228,22 @@ export function query(hours, dims, where, limit) {
 	let by_src = by.src, by_node = by.node, by_host = by.host;
 	let bh_src = by_hour.src, bh_node = by_hour.node;
 
-	// 30 天约 50 万行，这里是热点：字段按下标取、过滤条件提前展开，避免每行建临时对象
-	let col = { src: 1, node: 2, host: 3 };
+	// 字段下标：src=1, node=3, host=4
+	let col = { src: 1, node: 3, host: 4 };
 	let w_src = where.src, w_node = where.node, w_host = where.host;
 	let k1 = col[dims[0]], k2 = col[dims[1]], k3 = col[dims[2]];
 
+	let aliases = {};
 	let r = load_rows(hours);
 	for (let f in r.rows) {
-		let src = f[1], node = f[2], host = f[3];
+		let src = f[1], alias = f[2], node = f[3], host = f[4];
 		if ((w_src != null && src != w_src) || (w_node != null && node != w_node) || (w_host != null && host != w_host))
 			continue;
 
-		let up = +f[4], down = +f[5], bytes = up + down;
+		if (alias && alias != src)
+			aliases[src] = alias;
+
+		let up = +f[5], down = +f[6], bytes = up + down;
 		let key = k3 ? `${f[k1]}\t${f[k2]}\t${f[k3]}` : k2 ? `${f[k1]}\t${f[k2]}` : f[k1];
 		let t = total[key];
 		if (t) { t[0] += up; t[1] += down; } else total[key] = [up, down];
@@ -211,8 +276,11 @@ export function query(hours, dims, where, limit) {
 	let rows = map(slice(keys_sorted, 0, limit ?? length(keys_sorted)), (k) => {
 		let row = { up: total[k][0], down: total[k][1] };
 		let v = split(k, '\t');
-		for (let i, d in dims)
+		for (let i, d in dims) {
 			row[d] = v[i];
+			if (d == 'src')
+				row.alias = aliases[v[i]] ?? v[i];
+		}
 		return row;
 	});
 
@@ -246,6 +314,7 @@ export function query(hours, dims, where, limit) {
 		count: length(keys_sorted),
 		up: sum[0], down: sum[1],
 		devices: length(by.src),
+		aliases,
 		hourly: map(hours_list, (h) => [h, hourly[h]?.[0] ?? 0, hourly[h]?.[1] ?? 0]),
 		series, top,
 		links: map(slice(sort(keys(links), (a, b) => links[b] - links[a]), 0, TOP_LINKS), (k) => [...split(k, '\t'), links[k]])

@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import { connect } from 'ubus';
 import { cursor } from 'uci';
-import { DATA_DIR, CUR_FILE, KEEP_DAYS, INNER, hour_of, host_names, query } from 'mihomo_traffic';
+import { DATA_DIR, CUR_FILE, KEEP_DAYS, INNER, hour_of, host_names, get_online_ips, query } from 'mihomo_traffic';
 
 // 查询结果缓存：数据只在快照（每分钟）或归档（整点）时变化，期间同样的查询直接复用。
 // 戳记带上当前小时，查询窗口随整点滑动时自然失效
@@ -37,7 +37,23 @@ const methods = {
 				cache[key] = { stamp, result: r };
 			}
 			r.names = host_names();
+			r.online_ips = get_online_ips();
 			return r;
+		}
+	},
+
+	clear: {
+		call: function() {
+			for (let name in fs.lsdir(DATA_DIR) ?? []) {
+				if (match(name, /\.(tsv|day)$/))
+					fs.unlink(`${DATA_DIR}/${name}`);
+			}
+			if (fs.stat(CUR_FILE))
+				fs.unlink(CUR_FILE);
+			cache = {};
+			cache_size = 0;
+			connect()?.call('service', 'event', { type: 'restart', name: 'mihomo-traffic' });
+			return { success: true };
 		}
 	},
 

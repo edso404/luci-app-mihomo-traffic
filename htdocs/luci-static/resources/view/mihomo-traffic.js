@@ -21,6 +21,11 @@ const callController = rpc.declare({
 	method: 'controller'
 });
 
+const callClear = rpc.declare({
+	object: 'luci.mihomo-traffic',
+	method: 'clear'
+});
+
 const HOURS = [ [1, '1 小时'], [6, '6 小时'], [24, '24 小时'], [72, '3 天'], [168, '7 天'], [720, '30 天'] ];
 const DIMS = [
 	[ 'src', '设备' ], [ 'node', '出口节点' ], [ 'host', '目标' ],
@@ -243,8 +248,13 @@ return view.extend({
 	},
 
 	displayName(d, v) {
-		if (d == 'src' && this.stats?.names?.[v])
-			return '%s (%s)'.format(this.stats.names[v], v);
+		if (d == 'src') {
+			const alias = this.stats?.aliases?.[v];
+			if (alias && alias != v)
+				return '%s (%s)'.format(alias, v);
+			if (this.stats?.names?.[v])
+				return '%s (%s)'.format(this.stats.names[v], v);
+		}
 		return v;
 	},
 
@@ -450,7 +460,7 @@ return view.extend({
 		const total = links.reduce((a, l) => a + l[2], 0) || 1;
 		const sum = (i, k) => links.reduce((a, l) => a + (l[i] == k ? l[2] : 0), 0);
 		const label = (text, v) => ({ show: v / total >= 0.03, formatter: text });
-		const data = srcs.map((s) => ({ name: 's:' + s, label: label(this.stats.names[s] || s, sum(0, s)), depth: 0 }))
+		const data = srcs.map((s) => ({ name: 's:' + s, label: label(this.stats.aliases?.[s] || this.stats.names?.[s] || s, sum(0, s)), depth: 0 }))
 			.concat(nodes.map((n) => ({ name: 'n:' + n, label: label(n, sum(1, n)), depth: 1 })));
 		c.off('click');
 		c.on('click', (p) => {
@@ -512,9 +522,11 @@ return view.extend({
 		this.drawHosts(st);
 	},
 
-	renderCell(d, v, stats) {
-		const name = d == 'src' ? stats.names[v] : null;
-		const text = name ? [ name, E('br'), E('small', { class: 'mt-muted' }, v) ] : v;
+	renderCell(d, v, stats, row) {
+		let alias = null;
+		if (d == 'src')
+			alias = row?.alias || stats.aliases?.[v] || stats.names?.[v];
+		const text = (alias && alias != v) ? [ alias, E('br'), E('small', { class: 'mt-muted' }, v) ] : v;
 		if (v == stats.inner)
 			return E('td', { class: 'td mt-muted', title: 'mihomo 自身发起的连接（链式代理承载、DoH 等），与设备流量重复，不计入合计' }, text);
 		return E('td', { class: 'td' }, E('a', {
@@ -533,8 +545,10 @@ return view.extend({
 		const rows = stats.rows.map((r) => {
 			const t = r.up + r.down;
 			const inner = r.src == stats.inner;
-			return E('tr', { class: 'tr' + (inner ? ' mt-muted' : '') }, [
-				...dims.map((d) => this.renderCell(d, r[d], stats)),
+			const isOnline = stats.online_ips ? !!stats.online_ips[r.src] : true;
+			const offline = (r.src && !inner && !isOnline);
+			return E('tr', { class: 'tr' + (inner || offline ? ' mt-muted' : '') }, [
+				...dims.map((d) => this.renderCell(d, r[d], stats, r)),
 				E('td', { class: 'td', style: num }, fmt(r.up)),
 				E('td', { class: 'td', style: num }, fmt(r.down)),
 				E('td', { class: 'td', style: num }, E('strong', {}, fmt(t))),
@@ -727,6 +741,49 @@ return view.extend({
 
 	/* ---------- 页面 ---------- */
 
+	handleClearData() {
+		ui.showModal('清除历史数据', [
+			E('p', {}, '确定要清空所有已保存的流量历史数据吗？此操作将删除所有历史记录并重置快照，且不可撤销。'),
+			E('div', { class: 'right' }, [
+				E('button', {
+					class: 'cbi-button cbi-button-neutral',
+					click: ui.hideModal
+				}, '取消'),
+				' ',
+				E('button', {
+					class: 'cbi-button cbi-button-reset',
+					click: () => {
+						ui.hideModal();
+						callClear().then((res) => {
+							if (res?.success) {
+								ui.addNotification(null, E('p', {}, '历史流量数据已清空'), 'info');
+								this.refresh();
+							} else {
+								ui.addNotification(null, E('p', {}, '清空失败'), 'error');
+							}
+						}).catch((e) => {
+							ui.addNotification(null, E('p', {}, '清空失败: ' + (e.message || e)), 'error');
+						});
+					}
+				}, '确定清空')
+			])
+		]);
+	},
+
+	renderFooter() {
+		return E('div', { style: 'text-align:right;margin-top:1em;padding-bottom:1em' }, [
+			E('a', {
+				href: '#',
+				class: 'mt-muted',
+				style: 'font-size:85%;text-decoration:none;cursor:pointer',
+				click: (ev) => {
+					ev.preventDefault();
+					this.handleClearData();
+				}
+			}, '清除历史数据')
+		]);
+	},
+
 	panel(title, body, extra) {
 		return E('div', { class: 'mt-panel' + (extra ? ' ' + extra : '') }, [ E('h4', {}, title), body ]);
 	},
@@ -759,7 +816,8 @@ return view.extend({
 				]),
 				this.panel('流量最大的目标', this.hostsNode)
 			] : [ E('p', { style: 'color:#d1242f' }, '图表库加载失败，只显示表格。') ]),
-			E('div', { class: 'mt-panel' }, [ E('h4', {}, this.tableTitleNode), this.tableNode ])
+			E('div', { class: 'mt-panel' }, [ E('h4', {}, this.tableTitleNode), this.tableNode ]),
+			this.renderFooter()
 		]);
 
 		this.liveMsgNode = E('div', { class: 'mt-muted', style: 'margin:.3em 0 .8em' },
