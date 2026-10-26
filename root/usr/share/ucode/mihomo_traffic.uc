@@ -59,7 +59,7 @@ export function resolve_alias(ip, names, macs) {
 	if (mac) {
 		let m = match(mac, /([0-9a-fA-F]{2}):([0-9a-fA-F]{2})$/);
 		if (m)
-			return sprintf('设备-%s%s', toupper(m[1]), toupper(m[2]));
+			return sprintf('设备-%s%s', uc(m[1]), uc(m[2]));
 	}
 	return ip;
 };
