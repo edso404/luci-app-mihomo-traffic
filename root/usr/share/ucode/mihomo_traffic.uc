@@ -47,7 +47,7 @@ export function arp_macs() {
 	return macs;
 };
 
-// 解析设备别名：静态/DHCP 主机名优先 -> 无名字查 ARP MAC 后 4 位兜底 -> IP 自身兜底
+// 解析设备别名：静态/DHCP 主机名优先 -> 无名字查 ARP MAC 全名兜底 -> IP 自身兜底
 export function resolve_alias(ip, names, macs) {
 	if (!ip || ip == '-' || ip == INNER)
 		return ip;
@@ -56,11 +56,8 @@ export function resolve_alias(ip, names, macs) {
 		return names[ip];
 	macs ??= arp_macs();
 	let mac = macs[ip];
-	if (mac) {
-		let m = match(mac, /([0-9a-fA-F]{2}):([0-9a-fA-F]{2})$/);
-		if (m)
-			return sprintf('设备-%s%s', uc(m[1]), uc(m[2]));
-	}
+	if (mac)
+		return uc(mac);
 	return ip;
 };
 

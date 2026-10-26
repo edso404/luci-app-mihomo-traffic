@@ -30,7 +30,7 @@ function check(name, got, want) {
 
 // 验证 resolve_alias 的别名生成与兜底优先级
 check("resolve_alias dhcp", resolve_alias("192.168.1.1", { "192.168.1.1": "my-host" }, {}), "my-host");
-check("resolve_alias arp fallback", resolve_alias("192.168.1.2", {}, { "192.168.1.2": "aa:bb:cc:dd:12:34" }), "设备-1234");
+check("resolve_alias arp fallback", resolve_alias("192.168.1.2", {}, { "192.168.1.2": "aa:bb:cc:dd:12:34" }), "AA:BB:CC:DD:12:34");
 check("resolve_alias ip fallback", resolve_alias("192.168.1.3", {}, {}), "192.168.1.3");
 
 let now = time();
