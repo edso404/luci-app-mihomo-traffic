@@ -32,9 +32,9 @@ export function router_hostname() {
 	return m?.[1] || 'OpenWrt';
 };
 
-// 获取路由器自身的所有本地 IPv4 地址（127.0.0.1、LAN、WAN 等）
+// 获取路由器自身的所有本地 IPv4/IPv6 地址（127.0.0.1、::1、LAN、WAN 等）
 export function local_router_ips() {
-	let ips = { '127.0.0.1': true };
+	let ips = { '127.0.0.1': true, '::1': true };
 	try {
 		cursor().foreach('network', 'interface', (s) => {
 			if (type(s.ipaddr) == 'array') {
@@ -43,6 +43,12 @@ export function local_router_ips() {
 			} else if (s.ipaddr) {
 				ips[split(s.ipaddr, '/')[0]] = true;
 			}
+			if (type(s.ip6addr) == 'array') {
+				for (let ip in s.ip6addr)
+					ips[split(ip, '/')[0]] = true;
+			} else if (s.ip6addr) {
+				ips[split(s.ip6addr, '/')[0]] = true;
+			}
 		});
 	} catch (e) {}
 	try {
@@ -50,6 +56,10 @@ export function local_router_ips() {
 		let dump = u?.call('network.interface', 'dump');
 		for (let iface in dump?.interface ?? []) {
 			for (let a in iface['ipv4-address'] ?? []) {
+				if (a?.address)
+					ips[a.address] = true;
+			}
+			for (let a in iface['ipv6-address'] ?? []) {
 				if (a?.address)
 					ips[a.address] = true;
 			}
@@ -78,12 +88,12 @@ export function host_names() {
 	return names;
 };
 
-// 读取 ARP 表映射：IP -> MAC
+// 读取 ARP 表映射：IP -> MAC（忽略失效或全零的不完整条目）
 export function arp_macs() {
 	let macs = {};
 	for (let line in split(fs.readfile('/proc/net/arp') ?? '', '\n')) {
 		let f = split(line, /[ \t]+/);
-		if (length(f) >= 4 && match(f[3], /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
+		if (length(f) >= 4 && f[2] != '0x0' && f[3] != '00:00:00:00:00:00' && match(f[3], /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
 			macs[f[0]] = f[3];
 	}
 	return macs;

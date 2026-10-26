@@ -45,14 +45,20 @@ const methods = {
 	clear: {
 		call: function() {
 			for (let name in fs.lsdir(DATA_DIR) ?? []) {
-				if (match(name, /\.(tsv|day)$/))
+				if (match(name, /\.(tsv|day|tmp)$/))
 					fs.unlink(`${DATA_DIR}/${name}`);
 			}
 			if (fs.stat(CUR_FILE))
 				fs.unlink(CUR_FILE);
 			cache = {};
 			cache_size = 0;
-			connect()?.call('service', 'event', { type: 'restart', name: 'mihomo-traffic' });
+			try {
+				let p = fs.popen('/etc/init.d/mihomo-traffic restart', 'r');
+				p?.close();
+			} catch (e) {}
+			try {
+				connect()?.call('service', 'event', { type: 'restart', name: 'mihomo-traffic' });
+			} catch (e) {}
 			return { success: true };
 		}
 	},

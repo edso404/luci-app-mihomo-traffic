@@ -29,6 +29,8 @@ function append_hour(hour, agg) {
 
 	fs.mkdir(DATA_DIR);
 	let f = fs.open(sprintf('%s/%s.tsv', DATA_DIR, substr(hour, 0, 10)), 'a');
+	if (!f)
+		return;
 	for (let k, v in out)
 		f.write(sprintf('%s\t%s\t%d\t%d\n', hour, k, v[0], v[1]));
 	f.close();
