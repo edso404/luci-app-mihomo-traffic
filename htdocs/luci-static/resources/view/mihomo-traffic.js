@@ -364,15 +364,12 @@ return view.extend({
 			return;
 		const t = this.theme;
 		const x = st.hourly.map((h) => bucketLabel(h[0]));
-		const bar = st.step == 'day' || x.length <= 24;
 		const mode = this.state.trend;
 		let series;
 
 		const mk = (name, data, color) => ({
-			name, data, type: bar ? 'bar' : 'line', stack: 'total',
-			smooth: true, showSymbol: false, barMaxWidth: 28,
-			lineStyle: { width: 1.5 },
-			areaStyle: bar ? undefined : { opacity: t.dark ? .35 : .25 },
+			name, data, type: 'bar', stack: 'total',
+			barMaxWidth: 28,
 			emphasis: { focus: 'series' },
 			itemStyle: color ? { color } : undefined
 		});
@@ -390,7 +387,7 @@ return view.extend({
 			legend: { type: 'scroll', top: 0, textStyle: { color: t.text }, pageTextStyle: { color: t.muted } },
 			tooltip: Object.assign(this.baseOption().tooltip, {
 				trigger: 'axis',
-				axisPointer: { type: bar ? 'shadow' : 'line' },
+				axisPointer: { type: 'shadow' },
 				formatter: (ps) => {
 					const sum = ps.reduce((a, p) => a + (+p.value || 0), 0);
 					return [ '<b>%s</b>　合计 %s'.format(ps[0].axisValue, fmt(sum)) ]
@@ -399,7 +396,7 @@ return view.extend({
 						.join('<br>');
 				}
 			}),
-			xAxis: Object.assign({ type: 'category', data: x, boundaryGap: bar }, this.axisStyle(), { splitLine: { show: false } }),
+			xAxis: Object.assign({ type: 'category', data: x, boundaryGap: true }, this.axisStyle(), { splitLine: { show: false } }),
 			yAxis: Object.assign({ type: 'value', axisLabel: { color: t.muted, formatter: (v) => fmt(v) } }, {
 				axisLine: { show: false }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } }
 			}),
