@@ -57,7 +57,9 @@ const methods = {
 				p?.close();
 			} catch (e) {}
 			try {
-				connect()?.call('service', 'event', { type: 'restart', name: 'mihomo-traffic' });
+				let u = connect();
+				u?.call('service', 'event', { type: 'restart', name: 'mihomo-traffic' });
+				u?.disconnect();
 			} catch (e) {}
 			return { success: true };
 		}
@@ -76,15 +78,25 @@ const methods = {
 
 	status: {
 		call: function() {
-			let svc = connect()?.call('service', 'list', { name: 'mihomo-traffic' });
-			let inst = svc?.['mihomo-traffic']?.instances?.instance1;
+			let running = false, pid = null;
+			let u;
+			try {
+				u = connect();
+				let svc = u?.call('service', 'list', { name: 'mihomo-traffic' });
+				let inst = svc?.['mihomo-traffic']?.instances?.instance1;
+				running = !!inst?.running;
+				pid = inst?.pid;
+			} catch (e) {}
+			if (u) {
+				try { u.disconnect(); } catch (e) {}
+			}
 			let days = filter(fs.lsdir(DATA_DIR) ?? [], (n) => match(n, /\.tsv$/));
 			let size = 0;
 			for (let n in days)
 				size += fs.stat(`${DATA_DIR}/${n}`)?.size ?? 0;
 			return {
-				running: !!inst?.running,
-				pid: inst?.pid,
+				running,
+				pid,
 				snapshot_age: fs.stat(CUR_FILE) ? time() - fs.stat(CUR_FILE).mtime : null,
 				days: length(days),
 				keep_days: KEEP_DAYS,

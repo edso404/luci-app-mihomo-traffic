@@ -22,18 +22,30 @@ export function hour_of(t) {
 	return sprintf('%04d-%02d-%02d %02d', l.year, l.mon, l.mday, l.hour);
 };
 
-// 获取路由器系统主机名
+// 获取路由器系统主机名（内存缓存，避免重复读 UCI 和 /proc）
+let cached_hostname = null;
 export function router_hostname() {
+	if (cached_hostname)
+		return cached_hostname;
 	let name;
 	try { name = cursor().get('system', '@system[0]', 'hostname'); } catch (e) {}
 	if (name)
-		return name;
+		return (cached_hostname = name);
 	let m = match(fs.readfile('/proc/sys/kernel/hostname') ?? '', /^([^\r\n]+)/);
-	return m?.[1] || 'OpenWrt';
+	return (cached_hostname = m?.[1] || 'OpenWrt');
 };
 
 // 获取路由器自身的所有本地 IPv4/IPv6 地址（127.0.0.1、::1、LAN、WAN 等）
+// 增加 300s 缓存节流，且每次 ubus connect 严格 disconnect 释放句柄，防止耗尽系统连接打崩 ubusd
+let cached_router_ips = null;
+let cached_router_ips_time = 0;
+const ROUTER_IPS_TTL = 300;
+
 export function local_router_ips() {
+	let now = time();
+	if (cached_router_ips && (now - cached_router_ips_time < ROUTER_IPS_TTL))
+		return cached_router_ips;
+
 	let ips = { '127.0.0.1': true, '::1': true };
 	try {
 		cursor().foreach('network', 'interface', (s) => {
@@ -51,8 +63,10 @@ export function local_router_ips() {
 			}
 		});
 	} catch (e) {}
+
+	let u;
 	try {
-		let u = connect();
+		u = connect();
 		let dump = u?.call('network.interface', 'dump');
 		for (let iface in dump?.interface ?? []) {
 			for (let a in iface['ipv4-address'] ?? []) {
@@ -65,6 +79,12 @@ export function local_router_ips() {
 			}
 		}
 	} catch (e) {}
+	if (u) {
+		try { u.disconnect(); } catch (e) {}
+	}
+
+	cached_router_ips = ips;
+	cached_router_ips_time = now;
 	return ips;
 };
 
