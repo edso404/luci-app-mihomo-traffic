@@ -133,18 +133,13 @@ export function resolve_alias(ip, names, macs) {
 	return ip;
 };
 
-// 获取当前局域网在线活跃 IP 集合（未到期 DHCP 租约 + 活跃 ARP 记录 + 路由器本机）
+// 获取当前局域网在线活跃 IP 集合（活跃 ARP 记录 + 路由器本机）
+// 废除 DHCP 租约作为在线判据：DHCP 租约通常长达 12~24 小时，设备断网关机后租约依然存在，会导致离线设备假在线
 export function get_online_ips() {
 	let online = {};
-	let now = time();
-	for (let line in split(fs.readfile('/tmp/dhcp.leases') ?? '', '\n')) {
-		let f = split(line, ' ');
-		if (length(f) >= 4 && +f[0] > now)
-			online[f[2]] = true;
-	}
 	for (let line in split(fs.readfile('/proc/net/arp') ?? '', '\n')) {
 		let f = split(line, /[ \t]+/);
-		if (length(f) >= 4 && f[2] != '0x0' && match(f[3], /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
+		if (length(f) >= 4 && f[2] != '0x0' && f[3] != '00:00:00:00:00:00' && match(f[3], /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
 			online[f[0]] = true;
 	}
 	for (let ip, _ in local_router_ips())
