@@ -74,17 +74,31 @@ const methods = {
 		call: function() {
 			let running = false, pid = null;
 			try {
-				for (let entry in fs.lsdir('/proc') ?? []) {
-					if (match(entry, /^[0-9]+$/)) {
-						let cmd = fs.readfile(`/proc/${entry}/cmdline`);
-						if (cmd && match(cmd, /mihomo-traffic/) && match(cmd, /run/)) {
-							running = true;
-							pid = +entry;
-							break;
-						}
+				let p = fs.popen('pgrep -f "mihomo-traffic run"', 'r');
+				if (p) {
+					let line = trim(p.read('line') ?? '');
+					p.close();
+					let m = match(line, /^([0-9]+)/);
+					if (m) {
+						running = true;
+						pid = +m[1];
 					}
 				}
 			} catch (e) {}
+			if (!running) {
+				try {
+					for (let entry in fs.lsdir('/proc') ?? []) {
+						if (match(entry, /^[0-9]+$/)) {
+							let comm = trim(fs.readfile(`/proc/${entry}/comm`) ?? '');
+							if (comm == 'mihomo-traffic') {
+								running = true;
+								pid = +entry;
+								break;
+							}
+						}
+					}
+				} catch (e) {}
+			}
 			let days = filter(fs.lsdir(DATA_DIR) ?? [], (n) => match(n, /\.tsv$/));
 			let size = 0;
 			for (let n in days)
