@@ -34,63 +34,31 @@ export function router_hostname() {
 	return (cached_hostname = m?.[1] || 'OpenWrt');
 };
 
-// 将 /proc/net/if_inet6 的 32 位十六进制转译为标准与紧凑 IPv6 形式
-function parse_proc_ipv6(hex) {
-	if (length(hex) != 32)
-		return null;
-	let parts = [];
-	for (let i = 0; i < 32; i += 4) {
-		let p = substr(hex, i, 4);
-		let m = match(p, /^0+([0-9a-fA-F]+)$/);
-		push(parts, m ? m[1] : (p == '0000' ? '0' : p));
-	}
-	let str = join(':', parts);
-	let compact = replace(str, /(^|:)0(:0)+(?=:|$)/, '::');
-	if (match(compact, /^:::/))
-		compact = replace(compact, /^:::/, '::');
-	return [ lc(str), lc(compact) ];
-}
-
-// 获取路由器自身的所有本地 IPv4/IPv6 地址（127.0.0.1、::1、LAN、WAN 等）
-// 纯文件与内存驱动，彻底杜绝 ubus 依赖与 Socket 句柄开销
+// 获取路由器自身的所有本地 IPv4/IPv6 地址（127.0.0.1、::1、LAN、WAN、TUN 等全部运行态接口）
+// 统一通过 ip -o addr show 提取，彻底消除 UCI 遍历与 proc/net/if_inet6 的冗余解析
 let cached_router_ips = null;
+let cached_router_ips_time = 0;
+const ROUTER_IPS_TTL = 60; // 缓存 60 秒，兼顾高频调用零重复开销与 WAN/TUN 动态 IP 刷新
 
 export function local_router_ips() {
-	if (cached_router_ips)
+	let now = time();
+	if (cached_router_ips && (now - cached_router_ips_time < ROUTER_IPS_TTL))
 		return cached_router_ips;
 
 	let ips = { '127.0.0.1': true, '::1': true };
 	try {
-		cursor().foreach('network', 'interface', (s) => {
-			if (type(s.ipaddr) == 'array') {
-				for (let ip in s.ipaddr)
-					ips[split(ip, '/')[0]] = true;
-			} else if (s.ipaddr) {
-				ips[split(s.ipaddr, '/')[0]] = true;
+		let p = fs.popen('ip -o addr show 2>/dev/null', 'r');
+		if (p) {
+			for (let line = p.read('line'); line != null; line = p.read('line')) {
+				let m = match(line, /inet6?\s+([0-9a-fA-F:.]+)\/\d+/);
+				if (m)
+					ips[lc(m[1])] = true;
 			}
-			if (type(s.ip6addr) == 'array') {
-				for (let ip in s.ip6addr)
-					ips[split(ip, '/')[0]] = true;
-			} else if (s.ip6addr) {
-				ips[split(s.ip6addr, '/')[0]] = true;
-			}
-		});
-	} catch (e) {}
-
-	// 从 Linux 内核 /proc/net/if_inet6 获取全部本机真实 IPv6 地址
-	try {
-		for (let line in split(fs.readfile('/proc/net/if_inet6') ?? '', '\n')) {
-			let f = split(line, /[ \t]+/);
-			if (length(f) >= 1 && length(f[0]) == 32) {
-				let formatted = parse_proc_ipv6(f[0]);
-				if (formatted) {
-					ips[formatted[0]] = true;
-					ips[formatted[1]] = true;
-				}
-			}
+			p.close();
 		}
 	} catch (e) {}
 
+	cached_router_ips_time = now;
 	return (cached_router_ips = ips);
 };
 
