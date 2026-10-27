@@ -7,6 +7,17 @@ set -eu
 src=$(cd "$(dirname "$0")/.." && pwd)
 lib="$src/root/usr/share/ucode"
 
+# 验证代码库中绝对零 ubus.connect / import ubus 依赖
+if grep -rn "connect()" "$src/root/"; then
+	echo "FAIL: found connect() call in root/" >&2
+	exit 1
+fi
+if grep -rn "from 'ubus'" "$src/root/"; then
+	echo "FAIL: found ubus import in root/" >&2
+	exit 1
+fi
+echo "audit ok: zero ubus client dependencies verified"
+
 # 共用模块只能以模块方式编译，下面的测试 import 它时就会检查；这里检查两个脚本
 for f in "$src/root/usr/bin/mihomo-traffic" "$src/root/usr/share/rpcd/ucode/luci.mihomo-traffic"; do
 	ucode -L "$lib" -c -o /dev/null "$f"

@@ -3,7 +3,6 @@
 'use strict';
 
 import * as fs from 'fs';
-import { connect } from 'ubus';
 import { cursor } from 'uci';
 import { DATA_DIR, CUR_FILE, KEEP_DAYS, INNER, hour_of, host_names, get_online_ips, query } from 'mihomo_traffic';
 
@@ -56,11 +55,6 @@ const methods = {
 				let p = fs.popen('/etc/init.d/mihomo-traffic restart', 'r');
 				p?.close();
 			} catch (e) {}
-			try {
-				let u = connect();
-				u?.call('service', 'event', { type: 'restart', name: 'mihomo-traffic' });
-				u?.disconnect();
-			} catch (e) {}
 			return { success: true };
 		}
 	},
@@ -79,17 +73,18 @@ const methods = {
 	status: {
 		call: function() {
 			let running = false, pid = null;
-			let u;
 			try {
-				u = connect();
-				let svc = u?.call('service', 'list', { name: 'mihomo-traffic' });
-				let inst = svc?.['mihomo-traffic']?.instances?.instance1;
-				running = !!inst?.running;
-				pid = inst?.pid;
+				for (let entry in fs.lsdir('/proc') ?? []) {
+					if (match(entry, /^[0-9]+$/)) {
+						let cmd = fs.readfile(`/proc/${entry}/cmdline`);
+						if (cmd && match(cmd, /mihomo-traffic/) && match(cmd, /run/)) {
+							running = true;
+							pid = +entry;
+							break;
+						}
+					}
+				}
 			} catch (e) {}
-			if (u) {
-				try { u.disconnect(); } catch (e) {}
-			}
 			let days = filter(fs.lsdir(DATA_DIR) ?? [], (n) => match(n, /\.tsv$/));
 			let size = 0;
 			for (let n in days)

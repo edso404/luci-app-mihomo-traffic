@@ -5,7 +5,6 @@
 
 import * as fs from 'fs';
 import { cursor } from 'uci';
-import { connect } from 'ubus';
 
 // 环境变量只给测试用，正常运行都走默认路径
 export const DATA_DIR = getenv('MIHOMO_TRAFFIC_DATA') ?? '/etc/mihomo-traffic';
@@ -35,15 +34,29 @@ export function router_hostname() {
 	return (cached_hostname = m?.[1] || 'OpenWrt');
 };
 
+// 将 /proc/net/if_inet6 的 32 位十六进制转译为标准与紧凑 IPv6 形式
+function parse_proc_ipv6(hex) {
+	if (length(hex) != 32)
+		return null;
+	let parts = [];
+	for (let i = 0; i < 32; i += 4) {
+		let p = substr(hex, i, 4);
+		let m = match(p, /^0+([0-9a-fA-F]+)$/);
+		push(parts, m ? m[1] : (p == '0000' ? '0' : p));
+	}
+	let str = join(':', parts);
+	let compact = replace(str, /(^|:)0(:0)+(?=:|$)/, '::');
+	if (match(compact, /^:::/))
+		compact = replace(compact, /^:::/, '::');
+	return [ lc(str), lc(compact) ];
+}
+
 // 获取路由器自身的所有本地 IPv4/IPv6 地址（127.0.0.1、::1、LAN、WAN 等）
-// 增加 300s 缓存节流，且每次 ubus connect 严格 disconnect 释放句柄，防止耗尽系统连接打崩 ubusd
+// 纯文件与内存驱动，彻底杜绝 ubus 依赖与 Socket 句柄开销
 let cached_router_ips = null;
-let cached_router_ips_time = 0;
-const ROUTER_IPS_TTL = 300;
 
 export function local_router_ips() {
-	let now = time();
-	if (cached_router_ips && (now - cached_router_ips_time < ROUTER_IPS_TTL))
+	if (cached_router_ips)
 		return cached_router_ips;
 
 	let ips = { '127.0.0.1': true, '::1': true };
@@ -64,28 +77,21 @@ export function local_router_ips() {
 		});
 	} catch (e) {}
 
-	let u;
+	// 从 Linux 内核 /proc/net/if_inet6 获取全部本机真实 IPv6 地址
 	try {
-		u = connect();
-		let dump = u?.call('network.interface', 'dump');
-		for (let iface in dump?.interface ?? []) {
-			for (let a in iface['ipv4-address'] ?? []) {
-				if (a?.address)
-					ips[a.address] = true;
-			}
-			for (let a in iface['ipv6-address'] ?? []) {
-				if (a?.address)
-					ips[a.address] = true;
+		for (let line in split(fs.readfile('/proc/net/if_inet6') ?? '', '\n')) {
+			let f = split(line, /[ \t]+/);
+			if (length(f) >= 1 && length(f[0]) == 32) {
+				let formatted = parse_proc_ipv6(f[0]);
+				if (formatted) {
+					ips[formatted[0]] = true;
+					ips[formatted[1]] = true;
+				}
 			}
 		}
 	} catch (e) {}
-	if (u) {
-		try { u.disconnect(); } catch (e) {}
-	}
 
-	cached_router_ips = ips;
-	cached_router_ips_time = now;
-	return ips;
+	return (cached_router_ips = ips);
 };
 
 // IP → 主机名：DHCP 静态分配优先，再用动态租约补齐，以及路由器本机
